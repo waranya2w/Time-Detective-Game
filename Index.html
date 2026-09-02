@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Time Detective Junior - นักสืบกาลเวลารุ่นจิ๋ว</title>
+    
+    <link href="https://fonts.googleapis.com/css2?family=Mali:wght@400;600;700&display=swap" rel="stylesheet">
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: { mali: ['Mali', 'cursive'] },
+                    colors: {
+                        midnight: '#0A0E1A',
+                        indigoSlate: '#1E1B4B',
+                    },
+                    animation: {
+                        'shake': 'shake 0.5s cubic-bezier(.36,.07,.19,.97) both infinite',
+                        'pop': 'pop 0.3s ease-out',
+                        'float': 'float 3s ease-in-out infinite',
+                        'pulse-glow': 'pulseGlow 2s infinite',
+                        'portal-spin': 'portalSpin 2s linear infinite'
+                    },
+                    keyframes: {
+                        shake: {
+                            '10%, 90%': { transform: 'translate3d(-1px, 0, 0)' },
+                            '20%, 80%': { transform: 'translate3d(2px, 0, 0)' },
+                            '30%, 50%, 70%': { transform: 'translate3d(-4px, 0, 0)' },
+                            '40%, 60%': { transform: 'translate3d(4px, 0, 0)' }
+                        },
+                        pop: {
+                            '0%': { transform: 'scale(0.95)' },
+                            '50%': { transform: 'scale(1.05)' },
+                            '100%': { transform: 'scale(1)' }
+                        },
+                        float: {
+                            '0%, 100%': { transform: 'translateY(0)' },
+                            '50%': { transform: 'translateY(-10px)' }
+                        },
+                        pulseGlow: {
+                            '0%, 100%': { boxShadow: '0 0 15px 5px rgba(0, 240, 255, 0.4)' },
+                            '50%': { boxShadow: '0 0 25px 15px rgba(0, 240, 255, 0.8)' }
+                        },
+                        portalSpin: {
+                            '0%': { transform: 'rotate(0deg) scale(1)' },
+                            '50%': { transform: 'rotate(180deg) scale(1.2)' },
+                            '100%': { transform: 'rotate(360deg) scale(1)' }
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+
+    <style>
+        body { font-family: 'Mali', cursive; margin: 0; overflow: hidden; background-color: #0A0E1A; }
+        .glass-card {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        .btn-3d {
+            transition: all 0.1s;
+            box-shadow: 0 8px 0px 0px rgba(0,0,0,0.3);
+        }
+        .btn-3d:active {
+            transform: translateY(8px);
+            box-shadow: 0 0px 0px 0px rgba(0,0,0,0.3);
+        }
+        #webcam-container {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 0;
+            object-fit: cover; transform: scaleX(-1); /* Mirror camera */
+            opacity: 0.5; /* Keep it subtle behind the UI */
+        }
+        .zone-border-left { border-right: 2px dashed rgba(255,255,255,0.3); }
+        .zone-border-right { border-left: 2px dashed rgba(255,255,255,0.3); }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        // --- Web Audio API Synthesizer ---
+        class AudioSynth {
+            constructor() {
+                this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+                this.isMuted = false;
+            }
+            playTone(freq, type, duration, vol=0.1) {
+                if(this.isMuted) return;
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                osc.type = type;
+                osc.frequency.setValueAtTime(freq, this.ctx.currentTime);
+                
+                gain.gain.setValueAtTime(vol, this.ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + duration);
+                
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+                osc.start();
+                osc.stop(this.ctx.currentTime + duration);
+            }
+            click() { this.playTone(600, 'sine', 0.1, 0.2); }
+            tick() { this.playTone(800, 'square', 0.05, 0.05); }
+            correct() { 
+                this.playTone(523.25, 'sine', 0.2, 0.2); // C5
+                setTimeout(() => this.playTone(659.25, 'sine', 0.2, 0.2), 100); // E5
+                setTimeout(() => this.playTone(783.99, 'sine', 0.4, 0.2), 200); // G5
+            }
+            wrong() {
+                this.playTone(200, 'sawtooth', 0.3, 0.2);
+                setTimeout(() => this.playTone(150, 'sawtooth', 0.4, 0.2), 200);
+            }
+            transition() {
+                this.playTone(400, 'sine', 0.5, 0.1);
+                setTimeout(() => this.playTone(600, 'sine', 0.5, 0.1), 200);
+            }
+            win() {
+                [523, 659, 784, 1046, 784, 1046].forEach((f, i) => {
+                    setTimeout(() => this.playTone(f, 'sine', 0.3, 0.2), i * 150);
+                });
+            }
+            bgmLoop() {
+                if(this.isMuted) return;
+                // Simple BGM simulation for homepage
+                setInterval(() => {
+                    if(window.gameState === 'HOME' && !this.isMuted) {
+                        this.playTone(440, 'sine', 0.5, 0.05);
+                        setTimeout(() => this.playTone(523, 'sine', 0.5, 0.05), 500);
+                    }
+                }, 1000);
+            }
+            toggleMute() { this.isMuted = !this.isMuted; return this.isMuted; }
+        }
+        const synth = new AudioSynth();
+
+        // --- React Components ---
+        const { useState, useEffect, useRef } = React;
+
+        // Icons (Inline SVG)
+        const Volume2 = () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path><path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path></svg>;
+        const VolumeX = () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><line x1="23" y1="1" x2="1" y2="23"></line><line x1="22.94" y1="9.06" x2="17.02" y2="14.98"></line></svg>;
+
+        function App() {
+            // States: HOME, HOWTO, MODESELECT, TRANSITION, PLAYING, REVEAL, RETURNCENTER, END
+            const [gameState, setGameState] = useState('HOME');
+            window.gameState = gameState; // for synth BGM loop check
+            const [gameMode, setGameMode] = useState(1); // 1: Min->Sec, 2: Sec->Min
+            const [isMuted, setIsMuted] = useState(false);
+            const [playerZone, setPlayerZone] = useState('CENTER'); // LEFT, CENTER, RIGHT
+            const [score, setScore] = useState(0);
+            const [qCount, setQCount] = useState(1);
+            const [currentQ, setCurrentQ] = useState({ q: 0, l: 0, r: 0, ans: 'LEFT' });
+            
+            const videoRef = useRef(null);
+            const canvasRef = useRef(null);
+
+            // --- MediaPipe Initialization ---
+            useEffect(() => {
+                const videoElement = videoRef.current;
+                const pose = new Pose({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`});
+                
+                pose.setOptions({
+                    modelComplexity: 0, // 0 for faster performance
+                    smoothLandmarks: true,
+                    minDetectionConfidence: 0.5,
+                    minTrackingConfidence: 0.5
+                });
+
+                pose.onResults((results) => {
+                    if (results.poseLandmarks) {
+                        // Use nose (0) to track position. Mirrored X.
+                        const x = 1 - results.poseLandmarks[0].x; 
+                        if (x < 0.33) setPlayerZone('LEFT');
+                        else if (x > 0.66) setPlayerZone('RIGHT');
+                        else setPlayerZone('CENTER');
+                    } else {
+                        setPlayerZone('NONE');
+                    }
+                });
+
+                const camera = new Camera(videoElement, {
+                    onFrame: async () => { await pose.send({image: videoElement}); },
+                    width: 640, height: 480
+                });
+                camera.start();
+                synth.ctx.resume(); // Resume audio context on first interaction/load
+            }, []);
+
+            const generateQuestion = (mode) => {
+                let question, ans, dummy;
+                if(mode === 1) { // Min -> Sec
+                    question = Math.floor(Math.random() * 10) + 1; // 1-10 mins
+                    ans = question * 60;
+                    dummy = (question + (Math.random()>0.5?1:-1)) * 60;
+                    if(dummy <= 0) dummy = 120;
+                } else { // Sec -> Min
+                    const mins = Math.floor(Math.random() * 6) + 1; // 1-6 mins
+                    question = mins * 60; // 60-360 secs
+                    ans = mins;
+                    dummy = mins + (Math.random()>0.5?1:-1);
+                    if(dummy <= 0) dummy = 2;
+                }
+                
+                const isLeftCorrect = Math.random() > 0.5;
+                return {
+                    q: question,
+                    l: isLeftCorrect ? ans : dummy,
+                    r: isLeftCorrect ? dummy : ans,
+                    ans: isLeftCorrect ? 'LEFT' : 'RIGHT',
+                    unitQ: mode === 1 ? 'นาที' : 'วินาที',
+                    unitA: mode === 1 ? 'วินาที' : 'นาที'
+                };
+            };
+
+            const startGame = (mode) => {
+                synth.click();
+                setGameMode(mode);
+                setGameState('TRANSITION');
+                synth.transition();
+                setTimeout(() => {
+                    setScore(0);
+                    setQCount(1);
+                    setCurrentQ(generateQuestion(mode));
+                    setGameState('RETURNCENTER'); // Ask to stand in center first
+                }, 2000);
+            };
+
+            const handleMute = () => {
+                const muted = synth.toggleMute();
+                setIsMuted(muted);
+            };
+
+            // --- Background setup based on state ---
+            const getBg = () => {
+                if(gameState === 'HOME' || gameState === 'HOWTO' || gameState === 'MODESELECT') 
+                    return "url('http://googleusercontent.com/image_generation_content/11_522') center/cover";
+                return "url('http://googleusercontent.com/image_generation_content/10_528') center/cover";
+            };
+
+            return (
+                <div className="w-screen h-screen relative text-white" style={{ background: getBg(), backgroundColor: '#0A0E1A' }}>
+                    {/* Camera Layer - Always running but styled based on state */}
+                    <video ref={videoRef} id="webcam-container" autoPlay playsInline className={`${(gameState === 'HOME' || gameState === 'TRANSITION') ? 'hidden' : 'block'}`}></video>
+                    
+                    {/* Overlay to darken camera for UI */}
+                    <div className="absolute inset-0 bg-indigoSlate/60 z-10 pointer-events-none"></div>
+
+                    {/* Mute Button */}
+                    <button onClick={handleMute} className="absolute top-4 right-4 z-50 p-3 glass-card rounded-full hover:bg-white/20">
+                        {isMuted ? <VolumeX /> : <Volume2 />}
+                    </button>
+
+                    {/* UI Layer */}
+                    <div className="absolute inset-0 z-20 flex flex-col">
+                        
+                        {/* --- HOME SCREEN --- */}
+                        {gameState === 'HOME' && (
+                            <div className="flex-1 flex flex-col items-center justify-center animate-pop">
+                                <h1 className="text-6xl md:text-8xl font-bold mb-4 text-center drop-shadow-[0_5px_5px_rgba(0,0,0,0.8)] text-yellow-300">
+                                    Time Detective<br/>Junior
+                                </h1>
+                                <p className="text-2xl mb-12 drop-shadow-md">นักสืบกาลเวลารุ่นจิ๋ว</p>
+                                
+                                <div className="flex gap-6">
+                                    <button onClick={() => { synth.click(); setGameState('MODESELECT'); }} 
+                                            className="btn-3d bg-gradient-to-r from-green-400 to-blue-500 text-white text-3xl font-bold py-4 px-10 rounded-full border-4 border-white/50">
+                                        เริ่มเกม
+                                    </button>
+                                    <button onClick={() => { synth.click(); setGameState('HOWTO'); }}
+                                            className="btn-3d bg-gradient-to-r from-purple-500 to-pink-500 text-white text-2xl font-bold py-4 px-8 rounded-full border-4 border-white/50">
+                                        วิธีการเล่น
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* --- HOW TO PLAY --- */}
+                        {gameState === 'HOWTO' && (
+                            <div className="flex-1 flex items-center justify-center p-4">
+                                <div className="glass-card max-w-2xl w-full p-8 rounded-3xl animate-pop relative">
+                                    <h2 className="text-4xl font-bold text-center mb-6 text-yellow-300">วิธีการเล่น</h2>
+                                    <ul className="text-xl space-y-4 mb-8">
+                                        <li>1. เปิดกล้อง Webcam และขยับตัวให้อยู่ตรงกลางหน้าจอ</li>
+                                        <li>2. เกมจะสุ่มคำถามการเปลี่ยนหน่วยเวลา (นาที ↔ วินาที)</li>
+                                        <li>3. โยกย้ายร่างกายไปทาง <b>ซ้าย</b> หรือ <b>ขวา</b> เพื่อเลือกคำตอบภายในเวลา 10 วินาที</li>
+                                        <li>4. ตอบถูกรับคะแนน! กลับมายืนตรงกลางเพื่อเริ่มข้อต่อไป</li>
+                                    </ul>
+                                    <button onClick={() => { synth.click(); setGameState('HOME'); }} 
+                                            className="btn-3d w-full bg-blue-500 text-white text-2xl font-bold py-3 rounded-full">
+                                        เข้าใจแล้ว! กลับหน้าหลัก
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* --- MODE SELECT --- */}
+                        {gameState === 'MODESELECT' && (
+                            <div className="flex-1 flex items-center justify-center p-4 backdrop-blur-sm bg-black/40">
+                                <div className="glass-card max-w-3xl w-full p-8 rounded-3xl animate-pop flex flex-col items-center">
+                                    <h2 className="text-4xl font-bold text-center mb-8 text-yellow-300">เลือกภารกิจนักสืบ</h2>
+                                    <div className="flex flex-col md:flex-row gap-6 w-full justify-center">
+                                        <button onClick={() => startGame(1)} 
+                                                className="btn-3d flex-1 bg-gradient-to-br from-cyan-400 to-blue-600 p-8 rounded-3xl border-4 border-cyan-200 hover:scale-105 transition-transform group">
+                                            <div className="text-2xl mb-2 text-cyan-100 group-hover:animate-float">ภารกิจที่ 1</div>
+                                            <div className="text-4xl font-bold">นาที ➡ วินาที</div>
+                                        </button>
+                                        <button onClick={() => startGame(2)} 
+                                                className="btn-3d flex-1 bg-gradient-to-br from-orange-400 to-pink-600 p-8 rounded-3xl border-4 border-orange-200 hover:scale-105 transition-transform group">
+                                            <div className="text-2xl mb-2 text-orange-100 group-hover:animate-float">ภารกิจที่ 2</div>
+                                            <div className="text-4xl font-bold">วินาที ➡ นาที</div>
+                                        </button>
+                                    </div>
+                                    <button onClick={() => { synth.click(); setGameState('HOME'); }} 
+                                            className="mt-8 text-xl text-gray-300 hover:text-white underline">
+                                        ย้อนกลับ
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* --- TRANSITION (Portal Animation) --- */}
+                        {gameState === 'TRANSITION' && (
+                            <div className="flex-1 flex items-center justify-center overflow-hidden">
+                                <div className="w-[500px] h-[500px] rounded-full border-[20px] border-cyan-400/50 border-t-pink-500/80 animate-portal-spin flex items-center justify-center shadow-[0_0_100px_rgba(0,240,255,0.8)]">
+                                    <div className="text-5xl font-bold text-white animate-pulse">กำลังทะลุมิติ...</div>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* --- GAME LOOP (PLAYING, REVEAL, RETURNCENTER) --- */}
+                        {['PLAYING', 'REVEAL', 'RETURNCENTER'].includes(gameState) && (
+                            <div className="flex-1 flex flex-col h-full w-full">
+                                {/* Header / HUD */}
+                                <div className="flex justify-between items-center p-4 px-8 glass-card m-4 rounded-full">
+                                    <div className="text-2xl font-bold text-yellow-300">ข้อที่: {qCount}/10</div>
+                                    <div className="text-2xl font-bold text-cyan-300">คะแนน: {score}</div>
+                                </div>
+
+                                {/* Body Zones */}
+                                <div className="flex-1 flex w-full relative">
+                                    {/* Left Zone */}
+                                    <div className={`flex-1 flex items-center justify-center zone-border-left transition-colors duration-300 
+                                        ${playerZone === 'LEFT' ? 'bg-cyan-500/30' : ''}
+                                        ${gameState === 'REVEAL' && currentQ.ans === 'LEFT' ? 'bg-green-500/50 ring-8 ring-green-400' : ''}
+                                        ${gameState === 'REVEAL' && playerZone === 'LEFT' && currentQ.ans !== 'LEFT' ? 'bg-red-500/50' : ''}`}>
+                                        
+                                        {/* Answer Bubble Left */}
+                                        <div className={`p-8 rounded-full glass-card border-4 ${playerZone === 'LEFT' ? 'border-cyan-300 animate-pop' : 'border-white/20'}`}>
+                                            <span className="text-6xl font-bold">{currentQ.l}</span>
+                                            <span className="text-2xl block text-center mt-2">{currentQ.unitA}</span>
+                                        </div>
+                                    </div>
+
+                                    {/* Center Zone */}
+                                    <div className={`flex-1 flex flex-col items-center justify-start pt-10 transition-colors duration-300
+                                        ${playerZone === 'CENTER' ? 'bg-white/10' : ''}`}>
+                                        
+                                        {/* Question Bubble */}
+                                        <div className="glass-card p-6 rounded-3xl border-2 border-yellow-300 text-center mb-8 shadow-[0_0_20px_rgba(255,230,0,0.3)]">
+                                            <div className="text-xl text-gray-200">เปลี่ยนเวลาให้ถูกต้อง</div>
+                                            <div className="text-5xl font-bold text-yellow-300 mt-2">{currentQ.q} <span className="text-3xl">{currentQ.unitQ}</span></div>
+                                        </div>
+
+                                        {/* Game Logic Container */}
+                                        <GameLogicManager 
+                                            gameState={gameState} 
+                                            setGameState={setGameState}
+                                            playerZone={playerZone}
+                                            currentQ={currentQ}
+                                            generateQuestion={generateQuestion}
+                                            setCurrentQ={setCurrentQ}
+                                            qCount={qCount}
+                                            setQCount={setQCount}
+                                            score={score}
+                                            setScore={setScore}
+                                            gameMode={gameMode}
+                                        />
+
+                                    </div>
+
+                                    {/* Right Zone */}
+                                    <div className={`flex-1 flex items-center justify-center zone-border-right transition-colors duration-300
+                                        ${playerZone === 'RIGHT' ? 'bg-pink-500/30' : ''}
+                                        ${gameState === 'REVEAL' && currentQ.ans === 'RIGHT' ? 'bg-green-500/50 ring-8 ring-green-400' : ''}
+                                        ${gameState === 'REVEAL' && playerZone === 'RIGHT' && currentQ.ans !== 'RIGHT' ? 'bg-red-500/50' : ''}`}>
+                                        
+                                        {/* Answer Bubble Right */}
+                                        <div className={`p-8 rounded-full glass-card border-4 ${playerZone === 'RIGHT' ? 'border-pink-300 animate-pop' : 'border-white/20'}`}>
+                                            <span className="text-6xl font-bold">{currentQ.r}</span>
+                                            <span className="text-2xl block text-center mt-2">{currentQ.unitA}</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* --- END SCREEN --- */}
+                        {gameState === 'END' && (
+                            <div className="flex-1 flex items-center justify-center p-4 backdrop-blur-md bg-indigoSlate/80">
+                                <div className="glass-card max
